@@ -20,16 +20,16 @@ def rotation_matrix_from_vectors(vec1, vec2):
     return rotation_matrix
 
 #########################################################################
-###                              Main                                 ###
+###                            Options                                ###
 #########################################################################
+
+# tsv_file = "LHB-DotBox/Measurement2_6D.tsv"
+tsv_file = "LHC-DotBox/Measurement10_6D.tsv"
 
 #########################################################################
 ###                        Calibration Data                           ###
 #########################################################################
 
-# Sample TSV data (you would replace this with your actual TSV file content)
-tsv_file = "scene_4_3D/scene_4_3D_calib_6D.tsv"
-tsv_data_file = "scene_4_3D/scene_4_3D_data_6D.tsv"
 # Read the TSV data into a DataFrame
 df = pd.read_csv(tsv_file, sep='\t', skiprows=13)
 start_time = pd.read_csv(tsv_file, sep='\t', skiprows = lambda x: x not in [7]).columns[1]
@@ -39,13 +39,13 @@ start_time = datetime.strptime(start_time, '%Y-%m-%d, %H:%M:%S.%f')
 start_time = start_time.replace(tzinfo=ZoneInfo("Europe/Paris"))
 start_time = start_time.astimezone(ZoneInfo("UTC"))
 
-# Select only the first 5 columns
-df = df.iloc[:, :5]
-#CHange the names of the columns and reorder the columns
-df.rename(columns={'DotBox X': 'x', 'Y':'y', 'Z':'z', 'Time':'timestamp','Frame':'frame'}, inplace=True)
-df = df[['timestamp','frame','x','y','z']]
+# Change the names of the columns and reorder the columns
+df.rename(columns={'DotBox X': 'dotbot_x_mm', 'Y':'dotbot_y_mm', 'Z':'dotbot_z_mm', 'Time':'timestamp', 'Frame':'frame', \
+                    'LHC X':'lh_x_mm', 'Y.2':'lh_y_mm', 'Z.2':'lh_z_mm', 'Roll.2':'lh_roll_deg',  'Pitch.2':'lh_pitch_deg', 'Yaw.2':'lh_yaw_deg',}, inplace=True)
+# Keep only the important columns
+df = df[['timestamp','frame','dotbot_x_mm','dotbot_y_mm','dotbot_z_mm', 'lh_x_mm', 'lh_y_mm', 'lh_z_mm', 'lh_roll_deg', 'lh_pitch_deg', 'lh_yaw_deg']]
 # Drop rows with 0.0 readings
-df = df[(df['x'] != 0.0) | (df['y'] != 0.0) | (df['z'] != 0.0)]
+df = df[(df != 0.0).all(axis=1)]
 df.reset_index(drop=True, inplace=True)
 
 
@@ -54,52 +54,9 @@ df['timestamp'] = df['timestamp'].apply(lambda x: start_time + timedelta(seconds
 df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
 # Save the selected columns to a CSV file
-csv_file_path = 'scene_4_3D_calib.csv'  # Specify your desired file path here
+csv_file_path = tsv_file.replace('tsv', 'csv')  # Specify your desired file path here
 df.to_csv(csv_file_path, index=True)
 
 print(f"File saved to {csv_file_path}")
 
-#########################################################################
-###                             Data File                             ###
-#########################################################################
-
-# Sample TSV data (you would replace this with your actual TSV file content)
-tsv_data_file = "scene_4_3D/scene_4_3D_data_6D.tsv"
-# Read the TSV data into a DataFrame
-df_data = pd.read_csv(tsv_data_file, sep='\t', skiprows=13)
-data_start_time = pd.read_csv(tsv_data_file, sep='\t', skiprows = lambda x: x not in [7]).columns[1]
-
-# convert timestamp to UTC
-data_start_time = datetime.strptime(data_start_time, '%Y-%m-%d, %H:%M:%S.%f')
-data_start_time = data_start_time.replace(tzinfo=ZoneInfo("Europe/Paris"))
-data_start_time = data_start_time.astimezone(ZoneInfo("UTC"))
-
-# Select only the first 5 columns
-df_data = df_data.iloc[:, :5]
-#CHange the names of the columns and reorder the columns
-df_data.rename(columns={'DotBox X': 'x', 'Y':'y', 'Z':'z', 'Time':'timestamp','Frame':'frame'}, inplace=True)
-df_data = df_data[['timestamp','frame','x','y','z']]
-# Drop rows with 0.0 readings
-df_data = df_data[(df_data['x'] != 0.0) | (df_data['y'] != 0.0) | (df_data['z'] != 0.0)]
-df_data.reset_index(drop=True, inplace=True)
-
-# Convert timetamp column to a datetime object
-df_data['timestamp'] = df_data['timestamp'].apply(lambda x: data_start_time + timedelta(seconds=x))
-
 # Clear outliers
-
-
-# Convert timetamp column from a datetime object to a properly formated string
-df_data['timestamp'] = df_data['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-
-# Concatenate the calib and data files to export a single big file
-df_data = pd.concat([df, df_data], ignore_index=True)
-
-
-
-
-# Save the selected columns to a CSV file
-csv_data_file_path = 'scene_4_3D_data.csv'  # Specify your desired file path here
-df_data.to_csv(csv_data_file_path, index=True)
-
-print(f"File saved to {csv_data_file_path}")
