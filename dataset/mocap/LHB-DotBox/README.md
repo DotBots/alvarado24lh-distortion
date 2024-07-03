@@ -1,0 +1,1 @@
+One LH2 sensor was moved around the LH basestation "B". Effort was taken to cover as much of the field of vision of the basestation as possible.
