@@ -1,185 +1,284 @@
 import pandas as pd
 from datetime import datetime
-import json
 import re
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-import cv2
+
 
 #############################################################################
 ###                                Options                                ###
 #############################################################################
+folder_1 = "dataset/lh2/5cmx5cm_square/1-continuos/"
+folder_2 = "dataset/lh2/5cmx5cm_square/2-separate/"
+folder_3 = "dataset/lh2/LHB-DotBox/"
+folder_4 = "dataset/lh2/LHC-DotBox/"
 
-scene_number = 3
+filename = "pydotbot.log"
+
+# choose which dataset to process
+folder = folder_4
+
+# Global variable marking which sweep  (first or second) has been already, and when
+sweep_slot = [{"exist":False, "time":0., "index":0}, \
+            {"exist":False, "time":0., "index":0}]
+
+#############################################################################
+###                             Functions                                 ###
+#############################################################################
+
+def select_sweep(data: dict[str, str | int]) -> int:
+    global sweep_slot
+
+    selected_sweep = 0
+
+    # If the DotBot timer resets, depend on the lfsr index to detect which sweep it is
+    if (data['db_time'] - sweep_slot[0]["time"]) < 0 or (data['db_time'] - sweep_slot[1]["time"]) < 0:
+        
+        idiff_0 =  abs(data['lfsr_index'] - sweep_slot[0]["index"])
+        idiff_1 =  abs(data['lfsr_index'] - sweep_slot[1]["index"])
+
+        # Use the one that is closest to 20ms
+        if (idiff_0 <= idiff_1):
+            selected_sweep = 0
+        else:
+            selected_sweep = 1
+    else:
+        # both sweep_slots are empty
+        if not sweep_slot[0]["exist"] and not sweep_slot[1]["exist"]:
+            # use first slot
+            selected_sweep = 0
+
+        # first sweep_slots is empty
+        if not sweep_slot[0]["exist"] and sweep_slot[1]["exist"]:
+            diff:int = (data["db_time"] - sweep_slot[1]["time"]) % 20000
+            if not (diff < 20000 - diff):
+                diff = 20000 - diff
+
+            if (diff < 1000): selected_sweep = 1
+            else: selected_sweep = 0
+
+        # second sweep_slots is empty
+        if sweep_slot[0]["exist"] and not sweep_slot[1]["exist"]:
+            diff:int = (data["db_time"] - sweep_slot[0]["time"]) % 20000
+            if not (diff < 20000 - diff):
+                diff = 20000 - diff     
+
+            if (diff < 1000): selected_sweep = 0
+            else: selected_sweep = 1   
+
+        # Both sweep_slote are full
+        if sweep_slot[0]["exist"] and sweep_slot[1]["exist"]:
+            # How far away is this new pulse from the already stored data
+            diff_0:int = (data["db_time"] - sweep_slot[0]["time"]) % 20000
+            if not (diff_0 < 20000 - diff_0):
+                diff_0 = 20000 - diff_0
+
+            diff_1:int = (data["db_time"] - sweep_slot[1]["time"]) % 20000
+            if not (diff_1 < 20000 - diff_1):
+                diff_1 = 20000 - diff_1
+
+            # Use the one that is closest to 20ms
+            if (diff_0 <= diff_1):
+                selected_sweep = 0
+            else:
+                selected_sweep = 1
+    
+
+    # save the current state of the global variable
+    sweep_slot[selected_sweep]["time"] = data["db_time"]
+    sweep_slot[selected_sweep]["exist"] = True
+    sweep_slot[selected_sweep]["index"] = data['lfsr_index']
+
+    return selected_sweep
+
+
+def check_timestamp(data: dict[str, str | int], log_data:list[dict[str, str | int]]) -> float | None:
+    """
+    return the relative milisecond error between the computer timestamp and the nRF timestamp.
+    if a reset is detected on the nRF (negative delta on db_time), return None.
+    If a big gap (>500ms) is detected, return None.
+    """
+    # First data point, return None
+    if log_data == []: return None
+
+    # Get last data point of the data log
+    prev_data = log_data[-1]
+
+    # Get time difference
+    db_time_diff: int = data["db_time"] - prev_data["db_time"]
+    pc_time_diff: int = (datetime.strptime(data["timestamp"], "%Y-%m-%dT%H:%M:%S.%fZ") - datetime.strptime(prev_data["timestamp"], "%Y-%m-%dT%H:%M:%S.%fZ")).microseconds
+
+    # Check for nRF reset.
+    if (db_time_diff < 0): return None
+
+    # Check for large gap
+    if (db_time_diff > 500e3): return None
+
+    # return time delta error
+    return (pc_time_diff - db_time_diff) / 1000.0
 
 #############################################################################
 ###                                Code                                   ###
 #############################################################################
 
-filename_calib = f"./scene_{scene_number}/scene_{scene_number}_calib.log"
-filename_data  = f"./scene_{scene_number}/scene_{scene_number}_data.log"
-
-if scene_number == 4: 
-    filename_calib = f"./scene_{scene_number}_3D/scene_{scene_number}_3D_calib.log"
-    filename_data  = f"./scene_{scene_number}_3D/scene_{scene_number}_3D_data.log"
-
-## Read the struct log with the information
-# Define a regular expression pattern to extract timestamp and source from log lines
-log_pattern = re.compile(r'timestamp=(?P<timestamp>.*?) .*? source=(?P<source>\S+) .*? sweep_0_poly=(?P<sweep_0_poly>\d+) sweep_0_off=(?P<sweep_0_off>\d+) sweep_0_bits=(?P<sweep_0_bits>\d+) sweep_1_poly=(?P<sweep_1_poly>\d+) sweep_1_off=(?P<sweep_1_off>\d+) sweep_1_bits=(?P<sweep_1_bits>\d+) sweep_2_poly=(?P<sweep_2_poly>\d+) sweep_2_off=(?P<sweep_2_off>\d+) sweep_2_bits=(?P<sweep_2_bits>\d+) sweep_3_poly=(?P<sweep_3_poly>\d+) sweep_3_off=(?P<sweep_3_off>\d+) sweep_3_bits=(?P<sweep_3_bits>\d+)')
+# Updated regular expression to capture the desired values more precisely
+log_pattern = re.compile(
+    r"timestamp=(?P<timestamp>[^ ]+) .* source=(?P<source>[^ ]+) .* poly=(?P<poly>[^ ]+) lfsr_index=(?P<lfsr_index>[^ ]+) db_time=(?P<db_time>[^ ]+)"
+)
 
 # Create an empty list to store the extracted data
-data = []
+log_data:list[dict[str, str | int]] = []
+time_diff: list[float] = []
 
-# Open the log file and iterate over each line
-for filename in [filename_calib, filename_data]:
-    with open(filename, "r") as log_file:
-        for line in log_file:
-            # Extract timestamp and source from the line
-            match = log_pattern.search(line)
-            if match and "lh2-4" in line:
-                # Append the extracted data to the list
-                data.append({
-                    "timestamp": datetime.strptime(match.group("timestamp"), "%Y-%m-%dT%H:%M:%S.%fZ"),
-                    "source": match.group("source"),
-                    "poly_0": int(match.group("sweep_0_poly")),
-                    "off_0":  int(match.group("sweep_0_off")),
-                    "bits_0": int(match.group("sweep_0_bits")),
-                    "poly_1": int(match.group("sweep_1_poly")),
-                    "off_1":  int(match.group("sweep_1_off")),
-                    "bits_1": int(match.group("sweep_1_bits")),
-                    "poly_2": int(match.group("sweep_2_poly")),
-                    "off_2":  int(match.group("sweep_2_off")),
-                    "bits_2": int(match.group("sweep_2_bits")),
-                    "poly_3": int(match.group("sweep_3_poly")),
-                    "off_3":  int(match.group("sweep_3_off")),
-                    "bits_3": int(match.group("sweep_3_bits")),
-                })
+# If the single test works, you can then apply the same to the file reading
+with open(folder + filename, "r") as log_file:
+    for line in log_file:
+        match = log_pattern.search(line)
+        if match and int(match.group("lfsr_index")) < 120e3:
 
-# Create a pandas DataFrame from the extracted data
-df = pd.DataFrame(data)
+            data = {
+                # "timestamp": datetime.strptime(match.group("timestamp"), "%Y-%m-%dT%H:%M:%S.%fZ"),
+                "timestamp": match.group("timestamp"),
+                "source": match.group("source"),
+                "poly": int(match.group("poly")),
+                "lfsr_index": int(match.group("lfsr_index")),
+                "db_time": int(match.group("db_time")),
+            }
 
-## Remove lines that don't have the data from both lighthouses
-# Define the conditions
-cond1 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([0, 1]).sum(axis=1) == 2
-cond2 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([2, 3]).sum(axis=1) == 2
-cond = cond1 & cond2
-# Filter the rows that meet the condition
-df = df.loc[cond].reset_index(drop=True)
+            # check time difference between dotbot and pc
+            data_time_diff = check_timestamp(data, log_data)
+            if data_time_diff is not None:
+                time_diff.append(data_time_diff)
 
-## Convert the data to a numpy a array and sort them to make them compatible with Cristobal's code
-poly_array = df[["bits_0", "bits_1", "bits_2", "bits_3"]].to_numpy()
-sorted_indices = np.argsort(df[['poly_0','poly_1','poly_2','poly_3']].values,axis=1)
-bits_df = df[['bits_0','bits_1','bits_2','bits_3']]
-sorted_bits = np.empty_like(bits_df)
-for i, row in enumerate(sorted_indices):
-    sorted_bits[i] = bits_df.values[i, row]
+            # Estimate if the data is the first or second sweep 
+            data["sweep"] = select_sweep(data)
+
+            log_data.append(data)
+
+for diff in time_diff:
+    print(f"{diff}")
+
+df:pd.DataFrame = pd.DataFrame(log_data)
 
 
-## Sort the columns for LH2-A and LH2-B separatedly.
-c01 = np.sort(sorted_bits[:,0:2], axis=1).astype(int)
-c23 = np.sort(sorted_bits[:,2:4], axis=1).astype(int)
-# Re-join the columns and separate them into the variables used by cristobals code.
-c0123 = np.hstack([c01, c23])
-c0123 = np.sort(sorted_bits, axis=1).astype(int)
-# This weird order to asign the columns is because there was an issue with the dataset, and the data order got jumbled.
-c1A = c0123[:,0] 
-c2A = c0123[:,2]
-c1B = c0123[:,1]
-c2B = c0123[:,3]
 
 
-#############################################################################
-###                           Save reordered data                         ###
-#############################################################################
 
-sorted_df = pd.DataFrame({
-                          'timestamp' : df['timestamp'],
+# ## Remove lines that don't have the data from both lighthouses
+# # Define the conditions
+# cond1 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([0, 1]).sum(axis=1) == 2
+# cond2 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([2, 3]).sum(axis=1) == 2
+# cond = cond1 & cond2
+# # Filter the rows that meet the condition
+# df = df.loc[cond].reset_index(drop=True)
 
-                          'LHA_count_1': c0123[:,0],
-
-                          'LHA_count_2': c0123[:,2],
-
-                          'LHB_count_1': c0123[:,1],
-
-                          'LHB_count_2': c0123[:,3]},
-                          index = df.index
-                          )
-
-#############################################################################
-###                           Clear Outliers                         ###
-#############################################################################
-# This goes grid point by grid point and removes datapoints who are too far away from mean.
-
-def clear_outliers(df, threshold=5e3):
-    """
-    takes a dataframe with the following coulmns 
-    "timestamp", 'LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2'
-    and removes any rows in which a change of more than 10k units per second occur.
-    """
+# ## Convert the data to a numpy a array and sort them to make them compatible with Cristobal's code
+# poly_array = df[["bits_0", "bits_1", "bits_2", "bits_3"]].to_numpy()
+# sorted_indices = np.argsort(df[['poly_0','poly_1','poly_2','poly_3']].values,axis=1)
+# bits_df = df[['bits_0','bits_1','bits_2','bits_3']]
+# sorted_bits = np.empty_like(bits_df)
+# for i, row in enumerate(sorted_indices):
+#     sorted_bits[i] = bits_df.values[i, row]
 
 
-    # Function to calculate the rate of change
-    def rate_of_change(row, prev_row):
-        time_diff = (row['timestamp'] - prev_row['timestamp']).total_seconds()
-        if time_diff > 0:
-            for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
-                rate = abs(row[col] - prev_row[col]) / time_diff
-                if rate > threshold:
-                    return True
-        return False
+# ## Sort the columns for LH2-A and LH2-B separatedly.
+# c01 = np.sort(sorted_bits[:,0:2], axis=1).astype(int)
+# c23 = np.sort(sorted_bits[:,2:4], axis=1).astype(int)
+# # Re-join the columns and separate them into the variables used by cristobals code.
+# c0123 = np.hstack([c01, c23])
+# c0123 = np.sort(sorted_bits, axis=1).astype(int)
+# # This weird order to asign the columns is because there was an issue with the dataset, and the data order got jumbled.
+# c1A = c0123[:,0] 
+# c2A = c0123[:,2]
+# c1B = c0123[:,1]
+# c2B = c0123[:,3]
+
+
+# #############################################################################
+# ###                           Save reordered data                         ###
+# #############################################################################
+
+# sorted_df = pd.DataFrame({
+#                           'timestamp' : df['timestamp'],
+
+#                           'LHA_count_1': c0123[:,0],
+
+#                           'LHA_count_2': c0123[:,2],
+
+#                           'LHB_count_1': c0123[:,1],
+
+#                           'LHB_count_2': c0123[:,3]},
+#                           index = df.index
+#                           )
+
+# #############################################################################
+# ###                           Clear Outliers                         ###
+# #############################################################################
+# # This goes grid point by grid point and removes datapoints who are too far away from mean.
+
+# def clear_outliers(df, threshold=5e3):
+#     """
+#     takes a dataframe with the following coulmns 
+#     "timestamp", 'LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2'
+#     and removes any rows in which a change of more than 10k units per second occur.
+#     """
+
+
+#     # Function to calculate the rate of change
+#     def rate_of_change(row, prev_row):
+#         time_diff = (row['timestamp'] - prev_row['timestamp']).total_seconds()
+#         if time_diff > 0:
+#             for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
+#                 rate = abs(row[col] - prev_row[col]) / time_diff
+#                 if rate > threshold:
+#                     return True
+#         return False
     
-    def check_jump(row, prev_row, next_row):
-        for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
-            if abs(row[col] - prev_row[col]) > threshold and abs(next_row[col] - row[col]) > threshold:
-                return True
-        return False
+#     def check_jump(row, prev_row, next_row):
+#         for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
+#             if abs(row[col] - prev_row[col]) > threshold and abs(next_row[col] - row[col]) > threshold:
+#                 return True
+#         return False
 
-    should_restart = True
-    while should_restart:
-        should_restart = False
-        index_list = df.index.tolist()
-        for i in range(len(index_list)):
+#     should_restart = True
+#     while should_restart:
+#         should_restart = False
+#         index_list = df.index.tolist()
+#         for i in range(len(index_list)):
 
-            if i == 0:
-                continue
-            # for i, row in df.iterrows():
+#             if i == 0:
+#                 continue
+#             # for i, row in df.iterrows():
 
-            # Check for quikly changing outputs
-            if rate_of_change(df.loc[index_list[i]], df.loc[index_list[i-1]]):
-                df.drop(index_list[i], axis=0, inplace=True)
-                should_restart = True
-                break
+#             # Check for quikly changing outputs
+#             if rate_of_change(df.loc[index_list[i]], df.loc[index_list[i-1]]):
+#                 df.drop(index_list[i], axis=0, inplace=True)
+#                 should_restart = True
+#                 break
 
-            # Check for individual peaks, 1-row deltas (don't run on the last index)
-            if i != len(index_list)-1:
-                if check_jump(df.loc[index_list[i]], df.loc[index_list[i-1]], df.loc[index_list[i+1]]):
-                    df.drop(index_list[i], axis=0, inplace=True)
-                    should_restart = True
-                    break
+#             # Check for individual peaks, 1-row deltas (don't run on the last index)
+#             if i != len(index_list)-1:
+#                 if check_jump(df.loc[index_list[i]], df.loc[index_list[i-1]], df.loc[index_list[i+1]]):
+#                     df.drop(index_list[i], axis=0, inplace=True)
+#                     should_restart = True
+#                     break
 
-            # Check for any row with a 0
-            if df.loc[index_list[i]].eq(0).any():
-                df.drop(index_list[i], axis=0, inplace=True)
-                should_restart = True
-                break
+#             # Check for any row with a 0
+#             if df.loc[index_list[i]].eq(0).any():
+#                 df.drop(index_list[i], axis=0, inplace=True)
+#                 should_restart = True
+#                 break
 
-    return df
-
-
-# Get the cleaned values back on the variables needed for the next part of the code.
-sorted_df = clear_outliers(sorted_df, 10e3)
+#     return df
 
 
-# Change the format of the timestamp column
-sorted_df['timestamp'] = sorted_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+# # Get the cleaned values back on the variables needed for the next part of the code.
+# sorted_df = clear_outliers(sorted_df, 10e3)
 
 
-# Save the dataframe to a csv
-if scene_number == 4:
-    sorted_df.to_csv(f'./LH_data_scene_{scene_number}_3D.csv', index=True)
-else:
-    sorted_df.to_csv(f'./LH_data_scene_{scene_number}.csv', index=True)
+# # Change the format of the timestamp column
+# sorted_df['timestamp'] = sorted_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
 
 
-a=0
+
+# sorted_df.to_csv(folder + 'data.csv', index=True)
+df.to_csv(folder + 'data.csv', index=True)
+
