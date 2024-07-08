@@ -6,15 +6,15 @@ import re
 #############################################################################
 ###                                Options                                ###
 #############################################################################
-folder_1 = "dataset/lh2/5cmx5cm_square/1-continuos/"
-folder_2 = "dataset/lh2/5cmx5cm_square/2-separate/"
-folder_3 = "dataset/lh2/LHB-DotBox/"
-folder_4 = "dataset/lh2/LHC-DotBox/"
+folder_1 = "5cmx5cm_square/1-continuos/"
+folder_2 = "5cmx5cm_square/2-separate/"
+folder_3 = "LHB-DotBox/"
+folder_4 = "LHC-DotBox/"
 
 filename = "pydotbot.log"
 
 # choose which dataset to process
-folder = folder_4
+folder = folder_3
 
 # Global variable marking which sweep  (first or second) has been already, and when
 sweep_slot = [{"exist":False, "time":0., "index":0}, \
@@ -280,5 +280,5 @@ df:pd.DataFrame = pd.DataFrame(log_data)
 
 
 # sorted_df.to_csv(folder + 'data.csv', index=True)
-df.to_csv(folder + 'data.csv', index=True)
+df.to_csv(folder + 'lh_data.csv', index=True)
 

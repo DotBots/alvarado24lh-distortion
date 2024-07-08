@@ -23,8 +23,8 @@ def rotation_matrix_from_vectors(vec1, vec2):
 ###                            Options                                ###
 #########################################################################
 
-# tsv_file = "LHB-DotBox/Measurement2_6D.tsv"
-tsv_file = "LHC-DotBox/Measurement10_6D.tsv"
+tsv_file = "LHB-DotBox/Measurement2_6D.tsv"
+# tsv_file = "LHC-DotBox/Measurement10_6D.tsv"
 
 #########################################################################
 ###                        Calibration Data                           ###
@@ -54,7 +54,7 @@ df['timestamp'] = df['timestamp'].apply(lambda x: start_time + timedelta(seconds
 df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
 # Save the selected columns to a CSV file
-csv_file_path = tsv_file.replace('tsv', 'csv')  # Specify your desired file path here
+csv_file_path = tsv_file.split('/')[0] + '/mocap_data.csv' # Specify your desired file path here
 df.to_csv(csv_file_path, index=True)
 
 print(f"File saved to {csv_file_path}")
