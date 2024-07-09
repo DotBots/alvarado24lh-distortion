@@ -153,14 +153,44 @@ with open(folder + filename, "r") as log_file:
 
             log_data.append(data)
 
-for diff in time_diff:
-    print(f"{diff}")
 
-df:pd.DataFrame = pd.DataFrame(log_data)
+print(f"{time_diff}")
 
+df = pd.DataFrame(log_data)
 
+# Remove outliers detected in polynomials other than 0 and 1. Only mode 1 was used in the experiment
+df = df[df['poly'] < 2]
+# Reset the index
+df.reset_index(drop=True, inplace=True)
 
+# Detect repeated data and remove.
+duplicate_mask = df.duplicated(subset=['lfsr_index', 'db_time', 'poly'], keep=False)
+# Remove both instances of the duplicates
+df = df[~duplicate_mask]
+print(duplicate_mask.sum()/2)
+# Reset the index
+df.reset_index(drop=True, inplace=True)
 
+## Sort small out-of-order data lines
+# run it a few times to ensure no stragglers remain
+for y in range(5):
+    ## Organize data, some rows are inverted according to db_time
+    df['diff'] = df['db_time'].diff()
+    condition = (df['diff'] > -60000) & (df['diff'] < 0)
+    # Iterate through the rows that need swapping
+    for i in df.index[condition]:
+        if i > 0:  # Ensure we're not at the first row
+            # Swap the current row with the row above it
+            df.iloc[i-1], df.iloc[i] = df.iloc[i].copy(), df.iloc[i-1].copy()
+    # Remove the temporary 'time_diff' column
+    df = df.drop(columns=['diff'])
+    # Reset the index
+    df.reset_index(drop=True, inplace=True)
+
+# Check that the calculation was done correctly
+# df_diff = df["db_time"].diff()
+# df_weird = df[df_diff < 0]
+# df_diff = df_diff[df_diff < 0]
 
 # ## Remove lines that don't have the data from both lighthouses
 # # Define the conditions
