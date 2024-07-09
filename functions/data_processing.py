@@ -2,6 +2,7 @@ import json
 import numpy as np
 import pandas as pd
 from dateutil import parser
+import datetime
 import cv2
 from skspatial.objects import Plane, Points
 
@@ -25,7 +26,7 @@ Mat_B = np.array([[ 1.      , 0.    , 0.],
 ###                                Functions                              ###
 #############################################################################
 
-def read_dataset_files(lh_file, mocap_file, calib_file):
+def read_dataset_files(lh_file, mocap_file):
     """"
     Reads the files with the experiment data, one for the LH data and one for the Mocap data.
     Interpolates the Mocap data to match the LH data and combines both dataset into a single
@@ -35,71 +36,100 @@ def read_dataset_files(lh_file, mocap_file, calib_file):
     # Open all files
     lh_data = pd.read_csv(lh_file, index_col=0, parse_dates=['timestamp'])
     mocap_data = pd.read_csv(mocap_file, index_col=0, parse_dates=['timestamp'])
-    with open(calib_file, 'r') as json_file:
-        calib_data = json.load(json_file)
+
+    # Fix the timestamp for the LH data
+    base_timestamp = lh_data.iloc[0]['timestamp']
+    base_db_time   = lh_data.iloc[0]['db_time']
+
+    prev_db_time   = lh_data.iloc[0]['db_time']
+
+
+
+    for index, row in lh_data.iterrows():
+        current_timestamp = lh_data.at[index, 'timestamp']
+        current_db_time   = lh_data.at[index, 'db_time']
+
+        # A lh-minimote reset was detected. Reset the base for the timestamp calculation.
+        if (current_db_time < prev_db_time):
+            base_db_time = current_db_time
+            base_timestamp = current_timestamp
+            continue
+
+        # Estimate the real timestamp from the initial timestamp + the dotbot timer 
+        lh_data.at[index, 'timestamp'] = base_timestamp + datetime.timedelta(microseconds=float(current_db_time - base_db_time))
+
+        # Update the previous value
+        prev_db_time  = current_db_time
+
+    a=5
+
    
+
+
+
+
    
-    ## Handle the calibration file
-    lh2_calib_time = calib_data["scene_4_3D"]["timestamps_lh2"]
-    # Convert the strings to datetime objects
-    for key in lh2_calib_time:
-        lh2_calib_time[key] = [parser.parse(ts) for ts in lh2_calib_time[key]]
-    # Slice the calibration data and add it to the  data dataframe.
-    tl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tl"][0]) & (lh_data['timestamp'] < lh2_calib_time["tl"][1])].mean(axis=0, numeric_only=True)
-    tr = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tr"][0]) & (lh_data['timestamp'] < lh2_calib_time["tr"][1])].mean(axis=0, numeric_only=True)
-    bl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["bl"][0]) & (lh_data['timestamp'] < lh2_calib_time["bl"][1])].mean(axis=0, numeric_only=True)
-    br = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["br"][0]) & (lh_data['timestamp'] < lh2_calib_time["br"][1])].mean(axis=0, numeric_only=True)
-    # Save the calibration data.
-    calib_data["scene_4_3D"]['corners_lh2_count'] = {'tl':tl,
-                                 'tr':tr,
-                                 'bl':bl,
-                                 'br':br,
-                                 }
+    # ## Handle the calibration file
+    # lh2_calib_time = calib_data["scene_4_3D"]["timestamps_lh2"]
+    # # Convert the strings to datetime objects
+    # for key in lh2_calib_time:
+    #     lh2_calib_time[key] = [parser.parse(ts) for ts in lh2_calib_time[key]]
+    # # Slice the calibration data and add it to the  data dataframe.
+    # tl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tl"][0]) & (lh_data['timestamp'] < lh2_calib_time["tl"][1])].mean(axis=0, numeric_only=True)
+    # tr = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tr"][0]) & (lh_data['timestamp'] < lh2_calib_time["tr"][1])].mean(axis=0, numeric_only=True)
+    # bl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["bl"][0]) & (lh_data['timestamp'] < lh2_calib_time["bl"][1])].mean(axis=0, numeric_only=True)
+    # br = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["br"][0]) & (lh_data['timestamp'] < lh2_calib_time["br"][1])].mean(axis=0, numeric_only=True)
+    # # Save the calibration data.
+    # calib_data["scene_4_3D"]['corners_lh2_count'] = {'tl':tl,
+    #                              'tr':tr,
+    #                              'bl':bl,
+    #                              'br':br,
+    #                              }
 
 
-    # Get a unix timestamp column out of the datetime.
-    for df in [lh_data, mocap_data]:
-        df['time_s'] = df['timestamp'].apply(lambda x: x.timestamp() )
+    # # Get a unix timestamp column out of the datetime.
+    # for df in [lh_data, mocap_data]:
+    #     df['time_s'] = df['timestamp'].apply(lambda x: x.timestamp() )
 
-    # slice the datasets to be in the same timeframe.
-    # Slice LH to Mocap
-    start = mocap_data['timestamp'].iloc[0]  
-    end   = mocap_data['timestamp'].iloc[-1]
-    lh_data = lh_data.loc[ (lh_data['timestamp'] > start) & (lh_data['timestamp'] < end)]
-    # Slice Mocap to LH
-    start = lh_data['timestamp'].iloc[0]  
-    end   = lh_data['timestamp'].iloc[-1]
-    mocap_data = mocap_data.loc[ (mocap_data['timestamp'] > start) & (mocap_data['timestamp'] < end)]
+    # # slice the datasets to be in the same timeframe.
+    # # Slice LH to Mocap
+    # start = mocap_data['timestamp'].iloc[0]  
+    # end   = mocap_data['timestamp'].iloc[-1]
+    # lh_data = lh_data.loc[ (lh_data['timestamp'] > start) & (lh_data['timestamp'] < end)]
+    # # Slice Mocap to LH
+    # start = lh_data['timestamp'].iloc[0]  
+    # end   = lh_data['timestamp'].iloc[-1]
+    # mocap_data = mocap_data.loc[ (mocap_data['timestamp'] > start) & (mocap_data['timestamp'] < end)]
 
 
-    ## Interpolate the Mocap data to match the LH data.
-    mocap_np = {'time': mocap_data['time_s'].to_numpy(),
-                'x':    mocap_data['x'].to_numpy(),
-                'y':    mocap_data['y'].to_numpy(),
-                'z':    mocap_data['z'].to_numpy()}
+    # ## Interpolate the Mocap data to match the LH data.
+    # mocap_np = {'time': mocap_data['time_s'].to_numpy(),
+    #             'x':    mocap_data['x'].to_numpy(),
+    #             'y':    mocap_data['y'].to_numpy(),
+    #             'z':    mocap_data['z'].to_numpy()}
     
-    lh_time = lh_data['time_s'].to_numpy()
+    # lh_time = lh_data['time_s'].to_numpy()
 
-    # Offset the camera timestamp to get rid of the communication delay.
-    mocap_np['time'] += 265000e-6 # seconds
-    mocap_np['x_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['x'])
-    mocap_np['y_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['y'])
-    mocap_np['z_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['z'])
+    # # Offset the camera timestamp to get rid of the communication delay.
+    # mocap_np['time'] += 265000e-6 # seconds
+    # mocap_np['x_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['x'])
+    # mocap_np['y_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['y'])
+    # mocap_np['z_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['z'])
 
 
-    merged_data = pd.DataFrame({
-                          'timestamp' : lh_data['timestamp'],
-                          'time_s' : lh_data['time_s'],
-                          'LHA_count_1' : lh_data['LHA_count_1'],
-                          'LHA_count_2' : lh_data['LHA_count_2'],
-                          'LHB_count_1' : lh_data['LHB_count_1'],
-                          'LHB_count_2' : lh_data['LHB_count_2'],
-                          'real_x_mm': mocap_np['x_interp_lh'],
-                          'real_y_mm': mocap_np['y_interp_lh'],
-                          'real_z_mm': mocap_np['z_interp_lh']}
-                          )
+    # merged_data = pd.DataFrame({
+    #                       'timestamp' : lh_data['timestamp'],
+    #                       'time_s' : lh_data['time_s'],
+    #                       'LHA_count_1' : lh_data['LHA_count_1'],
+    #                       'LHA_count_2' : lh_data['LHA_count_2'],
+    #                       'LHB_count_1' : lh_data['LHB_count_1'],
+    #                       'LHB_count_2' : lh_data['LHB_count_2'],
+    #                       'real_x_mm': mocap_np['x_interp_lh'],
+    #                       'real_y_mm': mocap_np['y_interp_lh'],
+    #                       'real_z_mm': mocap_np['z_interp_lh']}
+    #                       )
     
-    return merged_data, calib_data["scene_4_3D"]
+    # return merged_data, calib_data["scene_4_3D"]
 
 def clear_outliers(df, threshold=5e3):
     """
@@ -176,7 +206,6 @@ def inject_noise_on_data(df, angle_std=10):
     df_copy[['LHA_count_1','LHA_count_2', 'LHB_count_1', 'LHB_count_2']] += noise
 
     return df_copy
-
 
 def LH2_count_to_pixels(count_1, count_2, mode):
     """

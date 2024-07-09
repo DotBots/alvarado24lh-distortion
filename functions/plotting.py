@@ -1,5 +1,4 @@
 import numpy as np
-import seaborn as sns
 
 # Fix to avoid Type 3 fonts on the figures
 # http://phyletica.org/matplotlib-fonts/
