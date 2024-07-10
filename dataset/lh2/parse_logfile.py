@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 
@@ -157,19 +157,23 @@ with open(folder + filename, "r") as log_file:
 print(f"{time_diff}")
 
 df = pd.DataFrame(log_data)
+# convert the string timestamp, to a dattime object
+df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%dT%H:%M:%S.%fZ")
 
 # Remove outliers detected in polynomials other than 0 and 1. Only mode 1 was used in the experiment
 df = df[df['poly'] < 2]
 # Reset the index
 df.reset_index(drop=True, inplace=True)
 
-# Detect repeated data and remove.
+
+## Detect repeated data and remove.
 duplicate_mask = df.duplicated(subset=['lfsr_index', 'db_time', 'poly'], keep=False)
 # Remove both instances of the duplicates
 df = df[~duplicate_mask]
 print(duplicate_mask.sum()/2)
 # Reset the index
 df.reset_index(drop=True, inplace=True)
+
 
 ## Sort small out-of-order data lines
 # run it a few times to ensure no stragglers remain
@@ -187,128 +191,32 @@ for y in range(5):
     # Reset the index
     df.reset_index(drop=True, inplace=True)
 
-# Check that the calculation was done correctly
-# df_diff = df["db_time"].diff()
-# df_weird = df[df_diff < 0]
-# df_diff = df_diff[df_diff < 0]
 
-# ## Remove lines that don't have the data from both lighthouses
-# # Define the conditions
-# cond1 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([0, 1]).sum(axis=1) == 2
-# cond2 = df[['poly_0', 'poly_1', 'poly_2', 'poly_3']].isin([2, 3]).sum(axis=1) == 2
-# cond = cond1 & cond2
-# # Filter the rows that meet the condition
-# df = df.loc[cond].reset_index(drop=True)
+## Recalculate the python timestamp based on the dotbot-timer timestamp
+# Fix the timestamp for the LH data
+base_timestamp = df.iloc[0]['timestamp']
+base_db_time   = df.iloc[0]['db_time']
 
-# ## Convert the data to a numpy a array and sort them to make them compatible with Cristobal's code
-# poly_array = df[["bits_0", "bits_1", "bits_2", "bits_3"]].to_numpy()
-# sorted_indices = np.argsort(df[['poly_0','poly_1','poly_2','poly_3']].values,axis=1)
-# bits_df = df[['bits_0','bits_1','bits_2','bits_3']]
-# sorted_bits = np.empty_like(bits_df)
-# for i, row in enumerate(sorted_indices):
-#     sorted_bits[i] = bits_df.values[i, row]
+prev_db_time   = df.iloc[0]['db_time']
 
+for index, row in df.iterrows():
+    current_timestamp = df.at[index, 'timestamp']
+    current_db_time   = df.at[index, 'db_time']
 
-# ## Sort the columns for LH2-A and LH2-B separatedly.
-# c01 = np.sort(sorted_bits[:,0:2], axis=1).astype(int)
-# c23 = np.sort(sorted_bits[:,2:4], axis=1).astype(int)
-# # Re-join the columns and separate them into the variables used by cristobals code.
-# c0123 = np.hstack([c01, c23])
-# c0123 = np.sort(sorted_bits, axis=1).astype(int)
-# # This weird order to asign the columns is because there was an issue with the dataset, and the data order got jumbled.
-# c1A = c0123[:,0] 
-# c2A = c0123[:,2]
-# c1B = c0123[:,1]
-# c2B = c0123[:,3]
+    # A lh-minimote reset was detected. Reset the base for the timestamp calculation.
+    if (current_db_time < prev_db_time):
+        base_db_time = current_db_time
+        base_timestamp = current_timestamp
+        # Update the previous value
+        prev_db_time  = current_db_time
+        continue
 
+    # Estimate the real timestamp from the initial timestamp + the dotbot timer 
+    df.at[index, 'timestamp'] = base_timestamp + timedelta(microseconds=float(current_db_time - base_db_time))
 
-# #############################################################################
-# ###                           Save reordered data                         ###
-# #############################################################################
-
-# sorted_df = pd.DataFrame({
-#                           'timestamp' : df['timestamp'],
-
-#                           'LHA_count_1': c0123[:,0],
-
-#                           'LHA_count_2': c0123[:,2],
-
-#                           'LHB_count_1': c0123[:,1],
-
-#                           'LHB_count_2': c0123[:,3]},
-#                           index = df.index
-#                           )
-
-# #############################################################################
-# ###                           Clear Outliers                         ###
-# #############################################################################
-# # This goes grid point by grid point and removes datapoints who are too far away from mean.
-
-# def clear_outliers(df, threshold=5e3):
-#     """
-#     takes a dataframe with the following coulmns 
-#     "timestamp", 'LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2'
-#     and removes any rows in which a change of more than 10k units per second occur.
-#     """
-
-
-#     # Function to calculate the rate of change
-#     def rate_of_change(row, prev_row):
-#         time_diff = (row['timestamp'] - prev_row['timestamp']).total_seconds()
-#         if time_diff > 0:
-#             for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
-#                 rate = abs(row[col] - prev_row[col]) / time_diff
-#                 if rate > threshold:
-#                     return True
-#         return False
-    
-#     def check_jump(row, prev_row, next_row):
-#         for col in ['LHA_count_1', 'LHA_count_2', 'LHB_count_1', 'LHB_count_2']:
-#             if abs(row[col] - prev_row[col]) > threshold and abs(next_row[col] - row[col]) > threshold:
-#                 return True
-#         return False
-
-#     should_restart = True
-#     while should_restart:
-#         should_restart = False
-#         index_list = df.index.tolist()
-#         for i in range(len(index_list)):
-
-#             if i == 0:
-#                 continue
-#             # for i, row in df.iterrows():
-
-#             # Check for quikly changing outputs
-#             if rate_of_change(df.loc[index_list[i]], df.loc[index_list[i-1]]):
-#                 df.drop(index_list[i], axis=0, inplace=True)
-#                 should_restart = True
-#                 break
-
-#             # Check for individual peaks, 1-row deltas (don't run on the last index)
-#             if i != len(index_list)-1:
-#                 if check_jump(df.loc[index_list[i]], df.loc[index_list[i-1]], df.loc[index_list[i+1]]):
-#                     df.drop(index_list[i], axis=0, inplace=True)
-#                     should_restart = True
-#                     break
-
-#             # Check for any row with a 0
-#             if df.loc[index_list[i]].eq(0).any():
-#                 df.drop(index_list[i], axis=0, inplace=True)
-#                 should_restart = True
-#                 break
-
-#     return df
-
-
-# # Get the cleaned values back on the variables needed for the next part of the code.
-# sorted_df = clear_outliers(sorted_df, 10e3)
-
-
-# # Change the format of the timestamp column
-# sorted_df['timestamp'] = sorted_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
-
-
+    # Update the previous value
+    prev_db_time  = current_db_time
 
 # sorted_df.to_csv(folder + 'data.csv', index=True)
-df.to_csv(folder + 'lh_data.csv', index=True)
+df.to_csv(folder + 'lh_data.csv', index=True, date_format="%Y-%m-%dT%H:%M:%S.%fZ")
 
