@@ -10,11 +10,12 @@ folder_1 = "5cmx5cm_square/1-continuos/"
 folder_2 = "5cmx5cm_square/2-separate/"
 folder_3 = "LHB-DotBox/"
 folder_4 = "LHC-DotBox/"
+# folder_4 = "dataset/lh2/LHC-DotBox/"
 
 filename = "pydotbot.log"
 
 # choose which dataset to process
-folder = folder_3
+folder = folder_4
 
 # Global variable marking which sweep  (first or second) has been already, and when
 sweep_slot = [{"exist":False, "time":0., "index":0}, \
@@ -216,6 +217,44 @@ for index, row in df.iterrows():
 
     # Update the previous value
     prev_db_time  = current_db_time
+
+
+
+## Unite the sweeps in to singles lines of the CSV to simplify processing later on.
+#
+df_2_data = {"timestamp":[], "source":[], "poly_0":[], "lfsr_index_0":[], "poly_1":[], "lfsr_index_1":[], "db_time":[]}
+current_sweep_lfsr = [None, None]
+current_sweep_poly = [None, None]
+prev_db_time   = df.iloc[0]['db_time']
+for index, row in df.iterrows():
+    # If there is a LH2 reset, erase the current saved poly and lfsr.
+    current_db_time   = df.at[index, 'db_time']
+    if (current_db_time < prev_db_time):
+        current_sweep_lfsr = [None, None]
+        current_sweep_poly = [None, None]
+        # Update the previous value
+        prev_db_time  = current_db_time
+
+    sweep = df.at[index, 'sweep']
+    current_sweep_lfsr[sweep] = df.at[index, 'lfsr_index']
+    current_sweep_poly[sweep] = df.at[index, 'poly']
+
+    # Check that you received at least two sweeps
+    if current_sweep_lfsr[0] is not None and current_sweep_lfsr[1] is not None:
+        df_2_data["timestamp"]   .append(df.at[index, "timestamp"])
+        df_2_data["source"]      .append(df.at[index, "source"])
+        df_2_data["poly_0"]      .append(current_sweep_poly[0])
+        df_2_data["lfsr_index_0"].append(current_sweep_lfsr[0])
+        df_2_data["poly_1"]      .append(current_sweep_poly[1])
+        df_2_data["lfsr_index_1"].append(current_sweep_lfsr[1])
+        df_2_data["db_time"]     .append(df.at[index, "db_time"])
+
+        # Update the previous value
+        prev_db_time  = current_db_time
+
+df = pd.DataFrame(df_2_data)
+    
+
 
 # sorted_df.to_csv(folder + 'data.csv', index=True)
 df.to_csv(folder + 'lh_data.csv', index=True, date_format="%Y-%m-%dT%H:%M:%S.%fZ")
