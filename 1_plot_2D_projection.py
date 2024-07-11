@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from functions.data_processing import   read_dataset_files, \
                                         LH2_count_to_pixels, \
-                                        solve_3d_scene, \
+                                        mocap_to_pixels, \
                                         scale_scene_to_real_size, \
                                         compute_distance_between_grid_points, \
                                         back_propagate_3D_point, \
@@ -36,20 +36,25 @@ if __name__ == "__main__":
     # Import data
     # df=pd.read_csv(data_file, index_col=0)
     # df, calib_data = read_dataset_files(lh_file, mocap_file, calib_file)
-    read_dataset_files(lh_file, mocap_file)
+    df, basestation_pose = read_dataset_files(lh_file, mocap_file)
 
     # Project sweep angles on to the z=1 image plane
-    pts_lighthouse_A = LH2_count_to_pixels(df['LHA_count_1'].values, df['LHA_count_2'].values, 0)
-    pts_lighthouse_B = LH2_count_to_pixels(df['LHB_count_1'].values, df['LHB_count_2'].values, 1)
+    pts_lighthouse = LH2_count_to_pixels(df['lfsr_index_0'].values, df['lfsr_index_1'].values, 0)
 
     # Add the LH2 projected matrix into the dataframe that holds the info about what point is where in real life.
-    df['LHA_proj_x'] = pts_lighthouse_A[:,0]
-    df['LHA_proj_y'] = pts_lighthouse_A[:,1]
-    df['LHB_proj_x'] = pts_lighthouse_B[:,0]
-    df['LHB_proj_y'] = pts_lighthouse_B[:,1]
+    df['LH_proj_x'] = pts_lighthouse[:,0]
+    df['LH_proj_y'] = pts_lighthouse[:,1]
 
-    # Solve the 3D scene with recoverPose and Triangulate points
-    point3D, t_star, R_star = solve_3d_scene(pts_lighthouse_A, pts_lighthouse_B)
+    # Mocap to pixels
+    mocap_pixels = mocap_to_pixels(df[['dotbot_x_mm', 'dotbot_y_mm', 'dotbot_z_mm']].values, basestation_pose)
+
+
+
+
+
+
+
+
 
     # Add The 3D point to the Dataframe that has the real coordinates, timestamps etc.
     # This will help correlate which point are supposed to go where.

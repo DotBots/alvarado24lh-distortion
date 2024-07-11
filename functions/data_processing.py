@@ -37,99 +37,81 @@ def read_dataset_files(lh_file, mocap_file):
     lh_data = pd.read_csv(lh_file, index_col=0, parse_dates=['timestamp'])
     mocap_data = pd.read_csv(mocap_file, index_col=0, parse_dates=['timestamp'])
 
-    # Fix the timestamp for the LH data
-    base_timestamp = lh_data.iloc[0]['timestamp']
-    base_db_time   = lh_data.iloc[0]['db_time']
+    ## Get a unix timestamp column out of the datetime.
+    for df in [lh_data, mocap_data]:
+        df['time_s'] = df['timestamp'].apply(lambda x: x.timestamp() )
 
-    prev_db_time   = lh_data.iloc[0]['db_time']
-
-
-
-    for index, row in lh_data.iterrows():
-        current_timestamp = lh_data.at[index, 'timestamp']
-        current_db_time   = lh_data.at[index, 'db_time']
-
-        # A lh-minimote reset was detected. Reset the base for the timestamp calculation.
-        if (current_db_time < prev_db_time):
-            base_db_time = current_db_time
-            base_timestamp = current_timestamp
-            continue
-
-        # Estimate the real timestamp from the initial timestamp + the dotbot timer 
-        lh_data.at[index, 'timestamp'] = base_timestamp + datetime.timedelta(microseconds=float(current_db_time - base_db_time))
-
-        # Update the previous value
-        prev_db_time  = current_db_time
-
-    a=5
-
-   
+    ## slice the datasets to be in the same timeframe.
+    # Slice LH to Mocap
+    start = mocap_data['timestamp'].iloc[0]  
+    end   = mocap_data['timestamp'].iloc[-1]
+    lh_data = lh_data.loc[ (lh_data['timestamp'] > start) & (lh_data['timestamp'] < end)]
+    # Slice Mocap to LH
+    start = lh_data['timestamp'].iloc[0]  
+    end   = lh_data['timestamp'].iloc[-1]
+    mocap_data = mocap_data.loc[ (mocap_data['timestamp'] > start) & (mocap_data['timestamp'] < end)]
 
 
-
-
-   
-    # ## Handle the calibration file
-    # lh2_calib_time = calib_data["scene_4_3D"]["timestamps_lh2"]
-    # # Convert the strings to datetime objects
-    # for key in lh2_calib_time:
-    #     lh2_calib_time[key] = [parser.parse(ts) for ts in lh2_calib_time[key]]
-    # # Slice the calibration data and add it to the  data dataframe.
-    # tl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tl"][0]) & (lh_data['timestamp'] < lh2_calib_time["tl"][1])].mean(axis=0, numeric_only=True)
-    # tr = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["tr"][0]) & (lh_data['timestamp'] < lh2_calib_time["tr"][1])].mean(axis=0, numeric_only=True)
-    # bl = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["bl"][0]) & (lh_data['timestamp'] < lh2_calib_time["bl"][1])].mean(axis=0, numeric_only=True)
-    # br = lh_data.loc[ (lh_data['timestamp'] > lh2_calib_time["br"][0]) & (lh_data['timestamp'] < lh2_calib_time["br"][1])].mean(axis=0, numeric_only=True)
-    # # Save the calibration data.
-    # calib_data["scene_4_3D"]['corners_lh2_count'] = {'tl':tl,
-    #                              'tr':tr,
-    #                              'bl':bl,
-    #                              'br':br,
-    #                              }
-
-
-    # # Get a unix timestamp column out of the datetime.
-    # for df in [lh_data, mocap_data]:
-    #     df['time_s'] = df['timestamp'].apply(lambda x: x.timestamp() )
-
-    # # slice the datasets to be in the same timeframe.
-    # # Slice LH to Mocap
-    # start = mocap_data['timestamp'].iloc[0]  
-    # end   = mocap_data['timestamp'].iloc[-1]
-    # lh_data = lh_data.loc[ (lh_data['timestamp'] > start) & (lh_data['timestamp'] < end)]
-    # # Slice Mocap to LH
-    # start = lh_data['timestamp'].iloc[0]  
-    # end   = lh_data['timestamp'].iloc[-1]
-    # mocap_data = mocap_data.loc[ (mocap_data['timestamp'] > start) & (mocap_data['timestamp'] < end)]
-
-
-    # ## Interpolate the Mocap data to match the LH data.
-    # mocap_np = {'time': mocap_data['time_s'].to_numpy(),
-    #             'x':    mocap_data['x'].to_numpy(),
-    #             'y':    mocap_data['y'].to_numpy(),
-    #             'z':    mocap_data['z'].to_numpy()}
+    ## Interpolate the Mocap data to match the LH data.
+    mocap_np = {'time': mocap_data['time_s'].to_numpy(),
+                'dotbot_x_mm':  mocap_data['dotbot_x_mm'].to_numpy(),
+                'dotbot_y_mm':  mocap_data['dotbot_y_mm'].to_numpy(),
+                'dotbot_z_mm':  mocap_data['dotbot_z_mm'].to_numpy(),
+                'lh_x_mm':      mocap_data['lh_x_mm'].to_numpy(),
+                'lh_y_mm':      mocap_data['lh_y_mm'].to_numpy(),
+                'lh_z_mm':      mocap_data['lh_z_mm'].to_numpy(),
+                'lh_roll_deg':  mocap_data['lh_roll_deg'].to_numpy(),
+                'lh_pitch_deg': mocap_data['lh_pitch_deg'].to_numpy(),
+                'lh_yaw_deg':   mocap_data['lh_yaw_deg'].to_numpy(),
+                }
     
-    # lh_time = lh_data['time_s'].to_numpy()
+    lh_time = lh_data['time_s'].to_numpy()
 
-    # # Offset the camera timestamp to get rid of the communication delay.
-    # mocap_np['time'] += 265000e-6 # seconds
-    # mocap_np['x_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['x'])
-    # mocap_np['y_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['y'])
-    # mocap_np['z_interp_lh'] = np.interp(lh_time, mocap_np['time'],  mocap_np['z'])
+    # Offset the camera timestamp to get rid of the communication delay.
+    mocap_np['time'] += 265000e-6 # seconds
+    # Interpolate Mocap data
+    mocap_np['dotbot_x_mm_interp_lh']   = np.interp(lh_time, mocap_np['time'],  mocap_np['dotbot_x_mm'])
+    mocap_np['dotbot_y_mm_interp_lh']   = np.interp(lh_time, mocap_np['time'],  mocap_np['dotbot_y_mm'])
+    mocap_np['dotbot_z_mm_interp_lh']   = np.interp(lh_time, mocap_np['time'],  mocap_np['dotbot_z_mm'])
+    mocap_np['lh_x_mm_interp_lh']       = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_x_mm'])
+    mocap_np['lh_y_mm_interp_lh']       = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_y_mm'])
+    mocap_np['lh_z_mm_interp_lh']       = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_z_mm'])
+    mocap_np['lh_roll_deg_interp_lh']   = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_roll_deg'])
+    mocap_np['lh_pitch_deg_interp_lh']  = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_pitch_deg'])
+    mocap_np['lh_yaw_deg_interp_lh']    = np.interp(lh_time, mocap_np['time'],  mocap_np['lh_yaw_deg'])
 
-
-    # merged_data = pd.DataFrame({
-    #                       'timestamp' : lh_data['timestamp'],
-    #                       'time_s' : lh_data['time_s'],
-    #                       'LHA_count_1' : lh_data['LHA_count_1'],
-    #                       'LHA_count_2' : lh_data['LHA_count_2'],
-    #                       'LHB_count_1' : lh_data['LHB_count_1'],
-    #                       'LHB_count_2' : lh_data['LHB_count_2'],
-    #                       'real_x_mm': mocap_np['x_interp_lh'],
-    #                       'real_y_mm': mocap_np['y_interp_lh'],
-    #                       'real_z_mm': mocap_np['z_interp_lh']}
-    #                       )
+    # Create Merged data frame
+    merged_data = pd.DataFrame({
+                            'timestamp' : lh_data['timestamp'],
+                            'time_s' : lh_data['time_s'],
+                            'poly_0' : lh_data['poly_0'],
+                            'lfsr_index_0' : lh_data['lfsr_index_0'],
+                            'poly_1' : lh_data['poly_1'],
+                            'lfsr_index_1' : lh_data['lfsr_index_1'],
+                            'dotbot_x_mm' : mocap_np['dotbot_x_mm_interp_lh'],
+                            'dotbot_y_mm' : mocap_np['dotbot_y_mm_interp_lh'],
+                            'dotbot_z_mm' : mocap_np['dotbot_z_mm_interp_lh'],
+                          })
     
-    # return merged_data, calib_data["scene_4_3D"]
+    # Store info about the static basestation location.
+    basestation_pose = {
+                    'x_mm' : mocap_np['lh_x_mm_interp_lh'].mean(),
+                    'y_mm' : mocap_np['lh_y_mm_interp_lh'].mean(),
+                    'z_mm' : mocap_np['lh_z_mm_interp_lh'].mean(),
+                    'roll_deg' : mocap_np['lh_roll_deg_interp_lh'].mean(),
+                    'pitch_deg' : mocap_np['lh_pitch_deg_interp_lh'].mean(),
+                    'yaw_deg' : mocap_np['lh_yaw_deg_interp_lh'].mean(),
+    }
+    
+    # Print LH static information
+    print(f'x_mm = {mocap_np['lh_x_mm_interp_lh'].mean()}, +- {mocap_np['lh_x_mm_interp_lh'].std()}')
+    print(f'y_mm = {mocap_np['lh_y_mm_interp_lh'].mean()}, +- {mocap_np['lh_y_mm_interp_lh'].std()}')
+    print(f'z_mm = {mocap_np['lh_z_mm_interp_lh'].mean()}, +- {mocap_np['lh_z_mm_interp_lh'].std()}')
+    print(f'roll_deg = {mocap_np['lh_roll_deg_interp_lh'].mean()}, +- {mocap_np['lh_roll_deg_interp_lh'].std()}')
+    print(f'pitch_deg = {mocap_np['lh_pitch_deg_interp_lh'].mean()}, +- {mocap_np['lh_pitch_deg_interp_lh'].std()}')
+    print(f'yaw_deg = {mocap_np['lh_yaw_deg_interp_lh'].mean()}, +- {mocap_np['lh_yaw_deg_interp_lh'].std()}')
+
+    return merged_data, basestation_pose
 
 def clear_outliers(df, threshold=5e3):
     """
@@ -241,6 +223,52 @@ def LH2_angles_to_pixels(azimuth, elevation):
     pts_lighthouse = np.array([np.tan(azimuth),         # horizontal pixel  
                                np.tan(elevation) * 1/np.cos(azimuth)]).T    # vertical   pixel 
     return pts_lighthouse
+
+def mocap_to_pixels(dotbot_pos_mm, basestation_pose):
+    """
+    """
+    # Transform points from World coordinate, to basestation coordinates.
+    R = rotation_matrix_from_euler_angles(basestation_pose['pitch_deg'], basestation_pose['roll_deg'], basestation_pose['yaw_deg'])
+    t = np.array([basestation_pose['x_mm'], basestation_pose['y_mm'], basestation_pose['z_mm']]).reshape([3,1])
+    Rt_pos = R.T @ (dotbot_pos_mm.T - t)
+    Rt_pos = Rt_pos.T
+
+    # Compute azimuth and elevation
+
+    # Convert to pixels.
+
+
+def rotation_matrix_from_euler_angles(pitch, roll, yaw):
+    # Convert angles from degrees to radians
+    pitch = np.radians(pitch)
+    roll = np.radians(roll)
+    yaw = np.radians(yaw)
+    
+    # Rotation matrix around x-axis (Pitch)
+    Rx = np.array([
+        [1, 0, 0],
+        [0, np.cos(pitch), -np.sin(pitch)],
+        [0, np.sin(pitch), np.cos(pitch)]
+    ])
+    
+    # Rotation matrix around y-axis (Roll)
+    Ry = np.array([
+        [np.cos(roll), 0, np.sin(roll)],
+        [0, 1, 0],
+        [-np.sin(roll), 0, np.cos(roll)]
+    ])
+    
+    # Rotation matrix around z-axis (Yaw)
+    Rz = np.array([
+        [np.cos(yaw), -np.sin(yaw), 0],
+        [np.sin(yaw), np.cos(yaw), 0],
+        [0, 0, 1]
+    ])
+    
+    # Combined rotation matrix
+    R = Rz @ Ry @ Rx
+    
+    return R
 
 def solve_3d_scene(pts_a, pts_b):
     """
