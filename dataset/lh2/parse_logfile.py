@@ -15,11 +15,11 @@ folder_4 = "LHC-DotBox/"
 filename = "pydotbot.log"
 
 # choose which dataset to process
-folder = folder_4
+folder = folder_3
 
 # Global variable marking which sweep  (first or second) has been already, and when
 sweep_slot = [{"exist":False, "time":0., "index":0}, \
-            {"exist":False, "time":0., "index":0}]
+              {"exist":False, "time":0., "index":0}]
 
 #############################################################################
 ###                             Functions                                 ###
@@ -76,11 +76,22 @@ def select_sweep(data: dict[str, str | int]) -> int:
             if not (diff_1 < 20000 - diff_1):
                 diff_1 = 20000 - diff_1
 
-            # Use the one that is closest to 20ms
-            if (diff_0 <= diff_1):
-                selected_sweep = 0
-            else:
-                selected_sweep = 1
+            # Match by time if any one of the pulses is sufficiently close (less than 1ms).
+            if (diff_0 < 1000 or diff_1 < 1000):
+                # Use the one that is closest to 20ms
+                if (diff_0 <= diff_1):
+                    selected_sweep = 0
+                else:
+                    selected_sweep = 1
+            else: # Otherwise, match by value
+                idiff_0 =  abs(data['lfsr_index'] - sweep_slot[0]["index"])
+                idiff_1 =  abs(data['lfsr_index'] - sweep_slot[1]["index"])
+
+                # Use the one that is closest to the lfsr index
+                if (idiff_0 <= idiff_1):
+                    selected_sweep = 0
+                else:
+                    selected_sweep = 1
     
 
     # save the current state of the global variable
@@ -129,6 +140,7 @@ log_pattern = re.compile(
 log_data:list[dict[str, str | int]] = []
 time_diff: list[float] = []
 
+print("Parse log files")
 # If the single test works, you can then apply the same to the file reading
 with open(folder + filename, "r") as log_file:
     for line in log_file:
@@ -149,8 +161,12 @@ with open(folder + filename, "r") as log_file:
             if data_time_diff is not None:
                 time_diff.append(data_time_diff)
 
+            # Remove outliers detected in polynomials other than 0 and 1. Only mode 1 was used in the experiment
+            if (data["poly"] > 1):
+                continue
+
             # Estimate if the data is the first or second sweep 
-            data["sweep"] = select_sweep(data)
+            # data["sweep"] = select_sweep(data)
 
             log_data.append(data)
 
@@ -161,12 +177,8 @@ df = pd.DataFrame(log_data)
 # convert the string timestamp, to a dattime object
 df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%dT%H:%M:%S.%fZ")
 
-# Remove outliers detected in polynomials other than 0 and 1. Only mode 1 was used in the experiment
-df = df[df['poly'] < 2]
-# Reset the index
-df.reset_index(drop=True, inplace=True)
 
-
+print("Remove duplicated data")
 ## Detect repeated data and remove.
 duplicate_mask = df.duplicated(subset=['lfsr_index', 'db_time', 'poly'], keep=False)
 # Remove both instances of the duplicates
@@ -176,6 +188,7 @@ print(duplicate_mask.sum()/2)
 df.reset_index(drop=True, inplace=True)
 
 
+print("Sort out of order data lines")
 ## Sort small out-of-order data lines
 # run it a few times to ensure no stragglers remain
 for y in range(5):
@@ -193,6 +206,7 @@ for y in range(5):
     df.reset_index(drop=True, inplace=True)
 
 
+print("Recalculate python timestamp")
 ## Recalculate the python timestamp based on the dotbot-timer timestamp
 # Fix the timestamp for the LH data
 base_timestamp = df.iloc[0]['timestamp']
@@ -218,18 +232,31 @@ for index, row in df.iterrows():
     # Update the previous value
     prev_db_time  = current_db_time
 
+print("Assigning sweeps")
+## Assign sweep 0 or 1, 
+sweep_col = []
+for index, row in df.iterrows():
+    data_line = {
+        "lfsr_index": df.at[index, 'lfsr_index'],
+        "db_time": df.at[index, 'db_time'],
+    }
+
+    sweep_col.append(select_sweep(data_line))
+df["sweep"] = sweep_col 
 
 
 ## Unite the sweeps in to singles lines of the CSV to simplify processing later on.
 #
+print("Unite sweeps into a single line")
 df_2_data = {"timestamp":[], "source":[], "poly_0":[], "lfsr_index_0":[], "poly_1":[], "lfsr_index_1":[], "db_time":[]}
 current_sweep_lfsr = [None, None]
 current_sweep_poly = [None, None]
 prev_db_time   = df.iloc[0]['db_time']
 for index, row in df.iterrows():
     # If there is a LH2 reset, erase the current saved poly and lfsr.
+    # If there is a large gap (>1s)in the data set, also reset the count.
     current_db_time   = df.at[index, 'db_time']
-    if (current_db_time < prev_db_time):
+    if (current_db_time < prev_db_time) or (current_db_time - prev_db_time > 1e6):
         current_sweep_lfsr = [None, None]
         current_sweep_poly = [None, None]
         # Update the previous value
