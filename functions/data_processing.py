@@ -229,13 +229,21 @@ def mocap_to_pixels(dotbot_pos_mm, basestation_pose):
     """
     # Transform points from World coordinate, to basestation coordinates.
     R = rotation_matrix_from_euler_angles(basestation_pose['pitch_deg'], basestation_pose['roll_deg'], basestation_pose['yaw_deg'])
+    # Make sure Z points forward, X points to the Right, and Y points Down
+    R_fix = rotation_matrix_from_euler_angles(0, 90, 0)
     t = np.array([basestation_pose['x_mm'], basestation_pose['y_mm'], basestation_pose['z_mm']]).reshape([3,1])
-    Rt_pos = R.T @ (dotbot_pos_mm.T - t)
-    Rt_pos = Rt_pos.T
+    Rt_pos = R @ R_fix @ (dotbot_pos_mm.T - t)
+    # Rt_pos = Rt_pos.T
 
     # Compute azimuth and elevation
+    azimuth   = np.arctan2(Rt_pos[0], Rt_pos[2]) # acrtan(X, Z)
+    elevation = np.arctan2( Rt_pos[1], np.sqrt(Rt_pos[0]**2 + Rt_pos[2]**2)) # arctan(Y, (X^2 + Z^2)^1/2)
 
     # Convert to pixels.
+    mocap_pixels = np.array([np.tan(azimuth),       # horizontal pixel  
+                               np.tan(elevation) * 1/np.cos(azimuth)]).T  # vertical   pixel 
+    
+    return mocap_pixels
 
 
 def rotation_matrix_from_euler_angles(pitch, roll, yaw):
