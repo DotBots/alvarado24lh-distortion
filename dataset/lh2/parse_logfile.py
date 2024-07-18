@@ -9,13 +9,13 @@ import re
 folder_1 = "5cmx5cm_square/1-continuos/"
 folder_2 = "5cmx5cm_square/2-separate/"
 folder_3 = "LHB-DotBox/"
-folder_4 = "LHC-DotBox/"
-# folder_4 = "dataset/lh2/LHC-DotBox/"
+# folder_4 = "LHC-DotBox/"
+folder_4 = "dataset/lh2/LHC-DotBox/"
 
 filename = "pydotbot.log"
 
 # choose which dataset to process
-folder = folder_3
+folder = folder_4
 
 # Global variable marking which sweep  (first or second) has been already, and when
 sweep_slot = [{"exist":False, "time":0., "index":0}, \
@@ -76,8 +76,8 @@ def select_sweep(data: dict[str, str | int]) -> int:
             if not (diff_1 < 20000 - diff_1):
                 diff_1 = 20000 - diff_1
 
-            # Match by time if any one of the pulses is sufficiently close (less than 1ms).
-            if (diff_0 < 1000 or diff_1 < 1000):
+            # Match by time if any one of the pulses is sufficiently close (less than 600s).
+            if (diff_0 < 600 or diff_1 < 600):
                 # Use the one that is closest to 20ms
                 if (diff_0 <= diff_1):
                     selected_sweep = 0
@@ -165,9 +165,6 @@ with open(folder + filename, "r") as log_file:
             if (data["poly"] > 1):
                 continue
 
-            # Estimate if the data is the first or second sweep 
-            # data["sweep"] = select_sweep(data)
-
             log_data.append(data)
 
 
@@ -232,6 +229,7 @@ for index, row in df.iterrows():
     # Update the previous value
     prev_db_time  = current_db_time
 
+
 print("Assigning sweeps")
 ## Assign sweep 0 or 1, 
 sweep_col = []
@@ -240,17 +238,32 @@ for index, row in df.iterrows():
         "lfsr_index": df.at[index, 'lfsr_index'],
         "db_time": df.at[index, 'db_time'],
     }
-
     sweep_col.append(select_sweep(data_line))
 df["sweep"] = sweep_col 
 
 
+print("Remove outliers")
+# Too small a value lfsr_index < 1000 is not possible
+df = df[df["lfsr_index"] >= 1000]
+# find isingle row big jumps
+f_diff_0 = df.loc[df["sweep"] == 0, "lfsr_index"].diff()
+b_diff_0 = df.loc[df["sweep"] == 0, "lfsr_index"].diff()
+f_diff_1 = df.loc[df["sweep"] == 1, "lfsr_index"].diff()
+b_diff_1 = df.loc[df["sweep"] == 1, "lfsr_index"].diff()
+mask_0 = (abs(f_diff_0) > 10000) & (abs(b_diff_0) > 10000)
+mask_1 = (abs(f_diff_1) > 10000) & (abs(b_diff_1) > 10000)
+out_list = mask_1[mask_1].index.tolist() + mask_0[mask_0].index.tolist()
+df = df.drop(out_list)
+# reset the index
+df.reset_index(drop=True, inplace=True)
+
+
 ## Unite the sweeps in to singles lines of the CSV to simplify processing later on.
-#
 print("Unite sweeps into a single line")
 df_2_data = {"timestamp":[], "source":[], "poly_0":[], "lfsr_index_0":[], "poly_1":[], "lfsr_index_1":[], "db_time":[]}
 current_sweep_lfsr = [None, None]
 current_sweep_poly = [None, None]
+current_sweep_timestamp =    [0, 0]
 prev_db_time   = df.iloc[0]['db_time']
 for index, row in df.iterrows():
     # If there is a LH2 reset, erase the current saved poly and lfsr.
@@ -265,19 +278,23 @@ for index, row in df.iterrows():
     sweep = df.at[index, 'sweep']
     current_sweep_lfsr[sweep] = df.at[index, 'lfsr_index']
     current_sweep_poly[sweep] = df.at[index, 'poly']
+    current_sweep_timestamp[sweep] = df.at[index, 'db_time']
 
     # Check that you received at least two sweeps
     if current_sweep_lfsr[0] is not None and current_sweep_lfsr[1] is not None:
-        df_2_data["timestamp"]   .append(df.at[index, "timestamp"])
-        df_2_data["source"]      .append(df.at[index, "source"])
-        df_2_data["poly_0"]      .append(current_sweep_poly[0])
-        df_2_data["lfsr_index_0"].append(current_sweep_lfsr[0])
-        df_2_data["poly_1"]      .append(current_sweep_poly[1])
-        df_2_data["lfsr_index_1"].append(current_sweep_lfsr[1])
-        df_2_data["db_time"]     .append(df.at[index, "db_time"])
+        # Check that both pulses are relatively recent. max 2 sweeps, or 40ms
+        if (current_db_time - current_sweep_timestamp[0] < 40e3) and (current_db_time - current_sweep_timestamp[1] < 40e3):
+            
+            df_2_data["timestamp"]   .append(df.at[index, "timestamp"])
+            df_2_data["source"]      .append(df.at[index, "source"])
+            df_2_data["poly_0"]      .append(current_sweep_poly[0])
+            df_2_data["lfsr_index_0"].append(current_sweep_lfsr[0])
+            df_2_data["poly_1"]      .append(current_sweep_poly[1])
+            df_2_data["lfsr_index_1"].append(current_sweep_lfsr[1])
+            df_2_data["db_time"]     .append(df.at[index, "db_time"])
 
-        # Update the previous value
-        prev_db_time  = current_db_time
+            # Update the previous value
+            prev_db_time  = current_db_time
 
 df = pd.DataFrame(df_2_data)
     
